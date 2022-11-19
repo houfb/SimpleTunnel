@@ -9,17 +9,19 @@ namespace SimpleTunnelVisitor
     internal class Common
     {
 
-        public static byte[] MakeHttpRequestMessageText(string link, string method, byte[] body, Dictionary<string, string> headers)
+        public static byte[] MakeHttpRequestMessageText(string link = null, string method = "GET", byte[] body = null, Dictionary<string, string> headers = null, string protocol = "HTTP/1.1")
         {
-            link = link ?? "/";
+            link ??= "/";// link = link ?? "/";
             method = (method ?? "").ToUpper() == "POST" ? "POST" : "GET";// sb.Append("POST"); } 
-            var type = "HTTP/1.1";
-            body = body ?? new byte[0];
+            body ??= Array.Empty<byte>();
+            headers ??= new Dictionary<string, string>();
+            protocol ??= "HTTP/1.1"; //var type = "HTTP/1.1";
+          
 
 
 
             var sb = new StringBuilder();
-            sb.AppendLine($"{method} {link} {type}");
+            sb.AppendLine($"{method} {link} {protocol}");
             foreach (var kv in headers)
             {
                 if (string.IsNullOrEmpty(kv.Key)) continue;
@@ -36,13 +38,7 @@ namespace SimpleTunnelVisitor
             Array.Copy(buf, 0, buffer, 0, buf.Length);
             Array.Copy(body, 0, buffer, buf.Length, body.Length);
             return buffer;
-
-
-            //sb.Append(body); 
-            //sb.ToString();
-            //byte[] buffer=new byte[sb.Length];
-            //return sb.CopyTo(0, (byte[]) buffer, 0, sb.Length);
-
+             
 
 
 
@@ -69,6 +65,7 @@ namespace SimpleTunnelVisitor
             //
             //正文部分的内容，它可以是文本字串、二进制字节串等。 
         }
+
 
 
 

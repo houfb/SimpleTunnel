@@ -13,10 +13,12 @@ namespace SimpleTunnelClient.V1
     {
         public void Start()
         {
-            Task.Run(() =>
-            {
-                ConnectServer();
-            });
+            //Task.Run(() =>
+            //{
+            //    ConnectServer();
+            //});
+
+            ConnectServer();
         }
 
 
@@ -42,7 +44,7 @@ namespace SimpleTunnelClient.V1
         /// <summary>
         /// 监听域名
         /// </summary>
-        string _domain = "http://houfb.cn";
+        string _domain = "houfb.cn"; //"http://houfb.cn";
         //System.Collections.Concurrent.ConcurrentBag<STClient> _STClientArray = new System.Collections.Concurrent.ConcurrentBag<STClient>();
         string _serverIP = "127.0.0.1";
         int _serverPort = 10011;
@@ -107,36 +109,93 @@ namespace SimpleTunnelClient.V1
         Socket socket = null!;
         void ConnectServer()
         {
-            //Socket socket = null!;
-            try
+            Task.Run(() =>
             {
-                //var loginMsg = $"login\r\n5B68ECD5-E552-491B-AA23-6B37163A9FB5"; 
-                var loginMsg = $"login\r\n{_secret}\r\n{_domain}";
+                var ic_redo = 0;
 
-
-                //连接服务器，并立即请求登录
-                socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                socket.SendTimeout = 5000; socket.ReceiveTimeout = 5000;
-                socket.Connect(new System.Net.IPEndPoint(IPAddress.Parse(_serverIP), _serverPort));
-                socket.Send(Encoding.UTF8.GetBytes(loginMsg));
-                //socket.Close();
-                AddRich("服务端连接成功！");
-
-
-
-                //获取回致，登录成功后，服务端应返回一个OK
-                var buffer = new byte[1024];
-                var len = socket.Receive(buffer);
-                if (len >= 2 && buffer[0] == 'O' && buffer[1] == 'K')
+                if (ic_redo > 0) { Thread.Sleep(5000); }
+            redo:
+                ic_redo++;
+                //Socket socket = null!;
+                try
                 {
-                    AddRich("服务端登录成功！");
+                    //var loginMsg = $"login\r\n5B68ECD5-E552-491B-AA23-6B37163A9FB5"; 
+                    var loginMsg = $"login\r\n{_secret}\r\n{_domain}";
+
+
+                    //连接服务器，并立即请求登录
+                    socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                    socket.SendTimeout = 5000; socket.ReceiveTimeout = 5000;
+
+                    socket.Connect(new System.Net.IPEndPoint(IPAddress.Parse(_serverIP), _serverPort));
+                    socket.Send(Encoding.UTF8.GetBytes(loginMsg));
+                    //socket.Close();
+                    AddRich("服务端连接成功！");
+
+
+
+                    //获取回致，登录成功后，服务端应返回一个OK
+                    var buffer = new byte[1024];
+                    var len = socket.Receive(buffer);
+                    if (len >= 2 && buffer[0] == 'O' && buffer[1] == 'K')
+                    {
+                        AddRich("服务端登录成功！");
+
+                        var done = Pool.NewManualResetEventSlim();
+                        var e = Pool.NewSocketAsyncEventArgs();
+                        e.SetBuffer(Array.Empty<byte>());
+                        e.Completed += (obj, arg) => { done.Set(); };
+                        while (true)
+                        {
+                            try
+                            {
+                                var b = socket.SendAsync(e);//(new ArraySegment<byte>(), SocketFlags.None);
+                                if (b) { done.Wait(1000); }
+
+                                if (e.SocketError == SocketError.Success)
+                                {
+                                    Thread.Sleep(TimeSpan.FromMinutes(0.5));
+                                }
+                                else
+                                {
+                                    throw new Exception($"连接失败，{{{e.SocketError}}}");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                AddRich($"M111913,服务端连接异常，{ex.Message},将在稍后自动尝试重新连接！");
+
+
+                                //释放资源，并在稍后自动尝试重新连接
+                                //Thread.Sleep(5000);
+                                using (done) { }
+                                using (e) { }
+                                using (socket) { }
+                                goto redo;
+                            }
+                            //Thread.Sleep(TimeSpan.FromMinutes(1));
+                        }
+                    }
+                    else
+                    {
+                        AddRich("服务端登录失败：" + Encoding.UTF8.GetString(buffer, 0, len));
+
+                        //释放资源，并在稍后自动尝试重新连接
+                        using (socket) { }
+                        goto redo;
+
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    AddRich("服务端登录失败：" + Encoding.UTF8.GetString(buffer, 0, len));
-                } 
-            }
-            catch (Exception ex) { AddRich($"M111809,{ex.Message}"); using (socket) { } socket = null; }
+                    AddRich($"M111809,{ex.Message}"); using (socket) { }
+
+                    //释放资源，并在稍后自动尝试重新连接
+                    // socket = null;
+                    if (socket != null) { using (socket) { } }
+                    goto redo;
+                }
+            });
         }
 
 
