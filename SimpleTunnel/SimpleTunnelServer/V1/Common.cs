@@ -262,7 +262,7 @@ namespace SimpleTunnelServer.V1
         }
 
 
-
+        #region HttpPack
         public class HttpPack
         {
             static readonly Regex regHeader = new Regex(@"(?<=\sContent\-Length: *)\S+", RegexOptions.IgnoreCase);
@@ -341,8 +341,12 @@ namespace SimpleTunnelServer.V1
             }
             string _Host;
 
-
+            public Socket OuterSocket
+            {
+                get;set;
+            } 
         }
+        #endregion
 
         public static string GetHeaderValue(string txt, string headerName, string df = "")
         {
@@ -417,6 +421,8 @@ namespace SimpleTunnelServer.V1
         {
             body ??= Array.Empty<byte>();
             headers ??= new Dictionary<string, string>();
+            if (!headers.ContainsKey("Content-Length")) { headers.Add("Content-Length", body.Length.ToString()); }
+
 
             var sb = new StringBuilder();
             sb.AppendLine($"{protocol} {code} {phrase}");

@@ -18,7 +18,8 @@ namespace SimpleTunnelClient.V1
             //    ConnectServer();
             //});
 
-            ConnectServer();
+            ConnectServer();//连接服务器，并维护长连接，在意外中断时，自动重连
+            GoReceive(); //尝试开始接收数据，其内部会自动处理
         }
 
 
@@ -51,7 +52,7 @@ namespace SimpleTunnelClient.V1
 
 
 
-
+        #region STClient,RequestInfoPack
         /// <summary>
         /// 客户端实例对象模型
         /// </summary>
@@ -104,9 +105,13 @@ namespace SimpleTunnelClient.V1
             public HttpResponseMessage response;
 
         }
+        #endregion
 
 
-        Socket socket = null!;
+        Socket _serverSocket = null;
+        /// <summary>
+        /// 连接服务端，并维持长连接，若意外中断，就自动尝试重新连接
+        /// </summary>
         void ConnectServer()
         {
             Task.Run(() =>
@@ -116,7 +121,7 @@ namespace SimpleTunnelClient.V1
                 if (ic_redo > 0) { Thread.Sleep(5000); }
             redo:
                 ic_redo++;
-                //Socket socket = null!;
+                Socket socket = null ;
                 try
                 {
                     //var loginMsg = $"login\r\n5B68ECD5-E552-491B-AA23-6B37163A9FB5"; 
@@ -124,7 +129,7 @@ namespace SimpleTunnelClient.V1
 
 
                     //连接服务器，并立即请求登录
-                    socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                     socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                     socket.SendTimeout = 5000; socket.ReceiveTimeout = 5000;
 
                     socket.Connect(new System.Net.IPEndPoint(IPAddress.Parse(_serverIP), _serverPort));
@@ -141,6 +146,13 @@ namespace SimpleTunnelClient.V1
                     {
                         AddRich("服务端登录成功！");
 
+
+                        //尝试开始接收数据，其内部会自动处理
+                        //GoReceive();
+                        _serverSocket = socket;
+
+
+                        //维持长连接，并在意外中断时，自动重连
                         var done = Pool.NewManualResetEventSlim();
                         var e = Pool.NewSocketAsyncEventArgs();
                         e.SetBuffer(Array.Empty<byte>());
@@ -198,8 +210,57 @@ namespace SimpleTunnelClient.V1
             });
         }
 
+        /// <summary>
+        /// 尝试开始接收数据，由时间驱动，其内部会自动处理一切问题
+        /// </summary>
+        void GoReceive()
+        {
+            Task.Run(() =>
+            {
+                while (true)
+                {
+                    redo:
+                    try
+                    {
+                        if (_serverSocket == null) { Thread.Sleep(5000);goto redo; }
+
+                        var soc = _serverSocket;  
+                        var e = Pool.NewSocketAsyncEventArgs();
+                        e.SetBuffer(new byte[1024]);
+                        e.UserToken = new UserTokenA() { };
+                        soc.ReceiveAsync(e);
 
 
+
+
+                    }
+                    catch (Exception ex) { AddRich($"M111923,{ex.Message}");Thread.Sleep(TimeSpan.FromSeconds(5)); }
+                }
+            });
+        }
+
+        #region UserTokenA
+        class UserTokenA
+        {
+            //public ManualResetEventSlim done;
+            //public STClient stc;
+            //public LSDomain lsd;
+            public int id;
+            //public Common.HttpPack pack;
+
+
+            public byte[] requestBytes;
+            public byte[] responseBytes;
+
+
+            public int sendTimes = 0;
+
+            //public byte[] responseBytes;
+            //public Socket responseSocket;
+        }
+        #endregion
+
+        //System.Collections.Concurrent.ConcurrentQueue<>
 
     }
 }

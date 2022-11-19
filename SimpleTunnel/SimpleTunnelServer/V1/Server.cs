@@ -24,6 +24,7 @@ namespace SimpleTunnelServer.V1
             Pool.Init();
             StartInnerAccept();
             StartOuterAccept();
+            StartDriver();
         }
 
         /// <summary>
@@ -81,6 +82,11 @@ namespace SimpleTunnelServer.V1
             public int id = 0;
 
 
+            /// <summary>
+            /// 客户端状态：0表示已连接成功，1表示已通过登录认证，2表示已断开连接
+            /// </summary>
+            public short status = 0;
+
             /*
             /// <summary>
             /// 客户端指定要监听的域名
@@ -95,10 +101,7 @@ namespace SimpleTunnelServer.V1
             public System.Collections.Concurrent.ConcurrentQueue<RequestInfoPack> requestQueue = new System.Collections.Concurrent.ConcurrentQueue<RequestInfoPack>();
 
 
-            /// <summary>
-            /// 客户端状态：0表示已连接成功，1表示已通过登录认证，2表示已断开连接
-            /// </summary>
-            public short status = 0;
+           
             /// <summary>
             /// 最后一次收到请求的时间
             /// </summary>
@@ -154,6 +157,10 @@ namespace SimpleTunnelServer.V1
             /// 响应信息包队列(出站队列)
             /// </summary>
             public System.Collections.Concurrent.ConcurrentQueue<Common.HttpPack> responseQueue = new System.Collections.Concurrent.ConcurrentQueue<Common.HttpPack>();
+            /// <summary>
+            /// 存储向客户端发送出去的消息，等客户端返回结果后，还可以从这个集合中找到它
+            /// </summary>
+            public System.Collections.Concurrent.ConcurrentDictionary<int, UserTokenA> userTokenAArray = new System.Collections.Concurrent.ConcurrentDictionary<int, UserTokenA>();
 
 
             ///// <summary>
@@ -171,8 +178,28 @@ namespace SimpleTunnelServer.V1
             ///// </summary>
             //public string connection;
 
+
+            /// <summary>
+            /// 获取一个序号，它从程序启动时的0开始累计，第一个获取出去的数为1，它仅对于程序的生存周期内是唯一的，但它是32位的，在达到最大值时，会自动归0并重新计数，这在大多数场景下，并不影响它作为一个简短的id号存在，因为即使是面对大量请求，也基本不可能有1亿个以上的请求存在于服务器上还没有给出响应。
+            /// </summary>
+            /// <returns></returns>
+            public int GetSeqNumber()
+            {
+                //if (__iseqnumber < __iseqnumbermax) return Interlocked.Increment(ref __iseqnumber);
+                //else { __iseqnumber = 1; return 1; } 
+
+                //var val = Interlocked.Increment(ref __iseqnumber);//保证所有累计结果都是使用Interlocked生成的，才能保证累计结果不会因多线程而重复。
+                //if (__iseqnumber > __iseqnumbermax) { __iseqnumber = 0; }
+                //return val;
+
+                return Interlocked.Increment(ref __iseqnumber);
+            }
+            int __iseqnumber = 0; // int __iseqnumbermax = int.MaxValue - 1000;
+
+
         }
         #endregion
+
 
 
 
@@ -280,7 +307,7 @@ namespace SimpleTunnelServer.V1
 
 
                             //将domain和socket添加到集合中
-                            var stc = new STClient() { socket = soc, lastRequestCostTime = 0, id = Common.GetSeqNumber() };
+                            var stc = new STClient() { socket = soc, lastRequestCostTime = 0, id = Common.GetSeqNumber(), status = 1 };
                             lock (_LSDomainArrayLock) //把过程全部锁在内部，以保证线程同步，此过程理论上不会过度争抢，也不会耗费太多时间
                             {
                                 var existed = _LSDomainArray.FirstOrDefault(x => x.domain == domain);
@@ -729,7 +756,7 @@ namespace SimpleTunnelServer.V1
                             {
                                 //if (string.IsNullOrEmpty(pack.Host)) { pack.Host = ((IPEndPoint)soc.RemoteEndPoint).ToString(); }
                                 //if (string.IsNullOrEmpty(pack.Host)) { pack.Host = Common.GetIP(soc.RemoteEndPoint); }
-                                if (string.IsNullOrEmpty(pack.Host)) { continue;  }//没有主机名就只接跳过，因为服务端监听的地址有多个，所以要求请求头中必须有Host指定
+                                if (string.IsNullOrEmpty(pack.Host)) { continue; }//没有主机名就只接跳过，因为服务端监听的地址有多个，所以要求请求头中必须有Host指定
                                 var domain = pack.Host;
 
                                 var target = _LSDomainArray.Where(x => x.domain == domain).FirstOrDefault();
@@ -737,6 +764,7 @@ namespace SimpleTunnelServer.V1
 
                                 if (target != null && client != null)//监听域存在
                                 {
+                                    pack.OuterSocket = soc;
                                     target.requestQueue.Enqueue(pack);
                                 }
                                 else
@@ -786,6 +814,173 @@ namespace SimpleTunnelServer.V1
                 //try { token.done.Set(); } catch { }
             }
         }
+
+
+
+        /// <summary>
+        /// 时间驱动器，用以驱动数据传输转移
+        /// </summary>
+        void StartDriver()
+        {
+            Task.Run(() =>
+            {
+                GoSendToClient();
+
+
+
+
+
+            });
+        }
+
+        /// <summary>
+        /// 执行，将每个监听域中的入站队列中的消息，转送给客户端client，这是一个同步循环，因为它在绝大多数情况下不会很耗时
+        /// </summary>
+        void GoSendToClient()
+        {
+            try
+            {
+                var bsp = new byte[] { 13, 10, 13, 10 };
+                var errMsgResBytes = Common.MakeHttpResponseMessageText(Encoding.UTF8.GetBytes("No client listener!"), null, "404", "FAIL");
+                foreach (var dom in _LSDomainArray)
+                {
+                    try
+                    {
+                        Common.HttpPack pack;
+                    rePop:
+                        var stc = dom.sockets.Where(x => x.status == 1).OrderBy(x => x.lastRequestCostTime).FirstOrDefault();
+                        if (dom.requestQueue.TryDequeue(out pack))
+                        {
+                            var id = dom.GetSeqNumber();//在此处才进行生成id的操作，因为只有这里才能保证与队列的同步前进
+                            var tok = new UserTokenA { id = id, lsd = dom, pack = pack, responseSocket = pack.OuterSocket };
+
+                            //若找不到任何客户端，就直接输出404
+                            if (stc == null)
+                            {
+                                //var tok = new UserTokenA { id = id, lsd = dom, responseBytes = errMsgResBytes };
+                                tok.responseBytes = errMsgResBytes;
+                                dom.userTokenAArray.AddOrUpdate(id, tok, (x, y) => tok);
+                                goto rePop;
+                            }
+
+
+                            //从队列中取出的这一个报文，然后编号，然后组装成新的报文
+                            var bid = Encoding.UTF8.GetBytes(id.ToString("D10"));
+                            var buf = pack.HeaderBytes.Concat(bsp).Concat(pack.BodyBytes).Concat(bid).ToArray();
+
+
+                            //将新报文发送给内部客户端
+                            tok.stc = stc;
+                            var e = Pool.NewSocketAsyncEventArgs();//var done = Pool.NewManualResetEventSlim();
+                            e.UserToken = tok; //new UserTokenA { id = id, lsd = dom, pack = pack };//e.UserToken = done;
+                            e.SetBuffer(buf);
+                            e.Completed += OnSendToClient_Completed; //redo:
+                            try
+                            {
+                                var b = stc.socket.SendAsync(e);  //if (b) { done.Wait(5000); }
+                                if (!b) OnSendToClient_Completed(stc.socket, e);
+                            }
+                            catch (Exception ex)//(ObjectDisposedException  )
+                            {
+                                #region -
+                                //try
+                                //{
+                                //    lock (_LSDomainArrayLock)//从clients集合中去掉这个坏掉的client
+                                //    {
+                                //        var arr = new List<STClient>(dom.sockets);
+                                //        arr.Remove(stc);
+                                //        if (arr.Count > 0) //此还有至少一个client
+                                //        {
+                                //            dom.sockets = arr.ToArray();
+                                //        }
+                                //        else
+                                //        { 
+                                //        } 
+                                //    }
+                                //    using (stc.socket) { }//释放掉这个坏掉的client
+                                //}
+                                //catch (Exception ex) { AddRich($"M111918,{ex.Message}"); }
+                                #endregion
+
+                                AddRich($"M111920,{ex.Message},正在尝试改发给其他client！");
+                                using (e) { }
+                                using (stc.socket) { stc.status = 2; }//释放掉连接，并标记此client为不可用
+                                goto rePop;//换其他client重试 
+                            }
+
+                        }
+                    }
+                    catch (Exception ex) { AddRich($"M111919,{ex.Message}"); }
+                }
+            }
+            catch (Exception ex) { AddRich($"M111922,{ex.Message}"); }
+        }
+        /// <summary>
+        /// 当向客户端client转送消息完成时事件
+        /// </summary> 
+        private void OnSendToClient_Completed(object sender, SocketAsyncEventArgs e)
+        {
+            Socket soc = null; UserTokenA userToken;
+            try
+            {
+                soc = (Socket)sender;
+                userToken = e.UserToken as UserTokenA;
+                var dom = userToken.lsd;
+
+                if (e.SocketError == SocketError.Success)
+                {
+                    dom.userTokenAArray.AddOrUpdate(userToken.id, userToken, (x, y) => userToken);
+                }
+                else //向内部客户端发送过程中出错了
+                {
+                    if (userToken.sendTimes < 3) //连同首次，一共尝试传输3次
+                    {
+                        try
+                        {
+                            userToken.sendTimes += 1;
+                            var b = soc.SendAsync(e);
+                            if (!b) OnSendToClient_Completed(soc, e);
+                        }
+                        catch (Exception ex) { AddRich($"M111921,{ex.Message}"); using (soc) { } }
+                    }
+                    else //多次重传后，依旧无法成功，就直接给这个传输包报错
+                    {
+                        AddRich($"M111917,消息包[{userToken.id}]经过多次重传后，依旧无法成功，将返回错误!");
+                        userToken.stc.status = 2;
+                        using (soc) { }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AddRich($"M111916,{ex.Message}");
+                //using (e) { }
+            }
+            finally
+            {
+                //using (soc) { }
+                using (e) { }
+            }
+        }
+
+        #region UserTokenA
+        class UserTokenA
+        {
+            public ManualResetEventSlim done;
+            public STClient stc;
+            public LSDomain lsd;
+            public int id;
+            public Common.HttpPack pack;
+
+            public int sendTimes = 0;
+
+            public byte[] responseBytes;
+            public Socket responseSocket;
+        }
+        #endregion
+
+
+
 
 
     }

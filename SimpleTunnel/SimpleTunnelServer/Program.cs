@@ -10,6 +10,7 @@ namespace SimpleTunnelServer
             //Console.WriteLine("Hello, World!");
             //Console.WriteLine(int.MaxValue);
             //TestBSearch();
+            //TestAddQDic();
             //new V1.Main().Start();
             new V1.Server().Start();
 
@@ -27,7 +28,27 @@ namespace SimpleTunnelServer
 
 
         }
+        static void TestAddQDic()
+        {
+            var dict = new System.Collections.Concurrent.ConcurrentDictionary<int, string>();
 
+            var sn = "houfb";
+            dict.AddOrUpdate(1, sn, (x, y) => y);
+
+            dict.AddOrUpdate(1, sn, (x, y) =>
+            { 
+                return sn + "ok";
+            });
+
+            dict.AddOrUpdate(1, sn, (x, y) => y);
+
+            dict.AddOrUpdate(1, sn, (x, y) =>sn);
+
+
+            var ss = "";
+
+
+        }
 
 
     }
