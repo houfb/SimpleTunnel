@@ -48,7 +48,7 @@ namespace SimpleTunnelVisitor.V1
 
 
 
-        async void DoHttpRequest()
+        async void DoHttpRequest_v1()
         {
             await Task.Run(() =>
             {
@@ -94,7 +94,51 @@ namespace SimpleTunnelVisitor.V1
             DoHttpRequest();
         }
 
+        async void DoHttpRequest()
+        {
+            await Task.Run(() =>
+            {
+                try
+                {
+                    AddRich("-------------------------------------------------");
 
+                    //组装请求报文
+                    var link = "/main_left.html"; var method = "GET"; var body = Encoding.UTF8.GetBytes("");
+                    var rbuf = Common.MakeHttpRequestMessageText(link, method, body, new Dictionary<string, string>() {
+                        { "Content-Length", body.Length.ToString() },
+                        { "Host", "houfb.cn" },
+                    });
+
+
+                    //连接服务器 
+                    using var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                    socket.SendTimeout = 1000; socket.ReceiveTimeout = 10000;
+                    socket.Connect(new System.Net.IPEndPoint(IPAddress.Parse(_serverIP), _serverPort));
+                    AddRich("服务端连接成功！");
+
+
+                    //发送请求报文
+                    socket.Send(rbuf);
+
+
+                    //获取回致报文
+                    var buffer = new byte[1024]; var lg = socket.Available; var sd = socket.Connected;
+                    var len = socket.Receive(buffer);
+                    if (len > 0)
+                    {
+                        AddRich("回致报文：" + Encoding.UTF8.GetString(buffer, 0, len));
+                    }
+                    else
+                    {
+                        AddRich("回致报文长度：" + len);
+                    }
+                }
+                catch (Exception ex) { AddRich($"M111809,{ex.Message}"); }
+            });
+
+            Thread.Sleep(1000);
+            DoHttpRequest();
+        }
 
 
 

@@ -49,6 +49,8 @@ namespace SimpleTunnelClient.V1
         //System.Collections.Concurrent.ConcurrentBag<STClient> _STClientArray = new System.Collections.Concurrent.ConcurrentBag<STClient>();
         string _serverIP = "127.0.0.1";
         int _serverPort = 10011;
+        string _webIP = "127.0.0.1";
+        int _webPort = 9005;
 
 
 
@@ -121,7 +123,7 @@ namespace SimpleTunnelClient.V1
                 if (ic_redo > 0) { Thread.Sleep(5000); }
             redo:
                 ic_redo++;
-                Socket socket = null ;
+                Socket socket = null;
                 try
                 {
                     //var loginMsg = $"login\r\n5B68ECD5-E552-491B-AA23-6B37163A9FB5"; 
@@ -129,7 +131,7 @@ namespace SimpleTunnelClient.V1
 
 
                     //连接服务器，并立即请求登录
-                     socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                    socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                     socket.SendTimeout = 5000; socket.ReceiveTimeout = 5000;
 
                     socket.Connect(new System.Net.IPEndPoint(IPAddress.Parse(_serverIP), _serverPort));
@@ -210,33 +212,86 @@ namespace SimpleTunnelClient.V1
             });
         }
 
+        readonly byte[] _http_spt_head_body = new byte[] { 13, 10, 13, 10 };
         /// <summary>
         /// 尝试开始接收数据，由时间驱动，其内部会自动处理一切问题
         /// </summary>
         void GoReceive()
         {
-            Task.Run(() =>
+            Task.Run(async () =>
             {
                 while (true)
                 {
-                    redo:
+                redo:
                     try
                     {
-                        if (_serverSocket == null) { Thread.Sleep(5000);goto redo; }
+                        if (_serverSocket == null) { Thread.Sleep(5000); goto redo; }
 
-                        var soc = _serverSocket;  
-                        var e = Pool.NewSocketAsyncEventArgs();
-                        e.SetBuffer(new byte[1024]);
-                        e.UserToken = new UserTokenA() { };
-                        soc.ReceiveAsync(e);
+                        //var soc = _serverSocket;
+                        //var e = Pool.NewSocketAsyncEventArgs();
+                        //e.SetBuffer(new byte[1024]);
+                        //e.UserToken = new UserTokenA() { };
+                        //e.Completed += OnReceiveFromServer_Completed;
+                        //var b = soc.ReceiveAsync(e);
+                        //if (!b) { OnReceiveFromServer_Completed(soc,e); }
+
+                        var soc = _serverSocket;
+                        var bts = Common.ReadAllBytes(soc);
+                        var packs = Common.HttpSplitPack(bts);
+
+                        foreach (var pack in packs)
+                        {
+                            var reqBytes = pack.HeaderBytes.Concat(_http_spt_head_body).Concat(pack.BodyBytes).ToArray();
+                            using (var websoc = new Socket(SocketType.Stream, ProtocolType.Tcp))
+                            {
+                                await websoc.ConnectAsync(IPAddress.Parse(_webIP), _webPort);
+
+                                using var done = Pool.NewManualResetEventSlim();
+                                using var e = Pool.NewSocketAsyncEventArgs();
+                                e.UserToken = done;
+                                e.Completed += OnSendToWeb_Completed;
+                                e.SetBuffer(reqBytes); 
+                                var b = websoc.SendAsync(e);
+                                if (!b) { OnSendToWeb_Completed(websoc, e); }
+
+                                done.Wait(1000 * 10); done.Reset();
 
 
+                                e.SetBuffer(new byte[1024*5] );
+                                b = websoc.ReceiveAsync(e);
+                                if (!b) { OnSendToWeb_Completed(websoc, e); }
 
+                                done.Wait(1000 * 10); done.Reset();
 
+                                var sersoc = _serverSocket;
+                                var buffer = new byte[e.BytesTransferred];
+                                Array.Copy(e.Buffer,0,buffer,0,buffer.Length);
+                                e.SetBuffer(buffer);
+                                sersoc.SendAsync(e);
+                                 
+                            }
+                        }
                     }
-                    catch (Exception ex) { AddRich($"M111923,{ex.Message}");Thread.Sleep(TimeSpan.FromSeconds(5)); }
+                    catch (Exception ex) { AddRich($"M111923,{ex.Message}"); Thread.Sleep(TimeSpan.FromSeconds(5)); }
                 }
             });
+        }
+
+
+
+        private void OnSendToWeb_Completed(object sender, SocketAsyncEventArgs e)
+        {
+            //throw new NotImplementedException();
+            (e.UserToken as ManualResetEventSlim )?.Set();
+
+
+
+
+        }
+
+        private void OnReceiveFromServer_Completed(object sender, SocketAsyncEventArgs e)
+        {
+            //throw new NotImplementedException();
         }
 
         #region UserTokenA
@@ -261,6 +316,10 @@ namespace SimpleTunnelClient.V1
         #endregion
 
         //System.Collections.Concurrent.ConcurrentQueue<>
+
+
+
+
 
     }
 }

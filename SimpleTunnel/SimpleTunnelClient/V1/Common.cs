@@ -7,9 +7,9 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
-namespace SimpleTunnelServer.V1
+namespace SimpleTunnelClient.V1
 {
-    internal static class Common
+    internal class Common
     {
         /// <summary>
         /// 输出日志信息到控制台
@@ -343,8 +343,8 @@ namespace SimpleTunnelServer.V1
 
             public Socket OuterSocket
             {
-                get; set;
-            }
+                get;set;
+            } 
         }
         #endregion
 
@@ -478,199 +478,6 @@ namespace SimpleTunnelServer.V1
             //return null;
         }
 
-
-
-        /// <summary>
-        /// 将可能的粘包的HTTP报文字节数组拆分成多个独白的报文(等待稍后完善)
-        /// </summary>
-        /// <param name="array"></param>
-        /// <returns></returns>
-        public static List<HttpPack> ReadHttpPack(this Socket soc, byte[] left, ref byte[] right, byte[] array)
-        {
-            List<HttpPack> list = new List<HttpPack>();
-            HttpPack hp = new HttpPack();
-
-            var hadHead = false; var hadBody = false;
-            var headBytes = new List<byte>(); var bodyBytes = new List<byte>();
-
-            if (left != null && left.Length > 0)
-            {
-                //while()
-
-            }
-
-
-
-            if (array != null && array.Length > 0)
-            {
-                //foreach方案：（传说效率高，但写起来不方便，稍后再说）
-                //byte last = 0; byte next = 0;//13=回车,10=换行
-                //foreach (var x in array)
-                //{
-                //    if (x == 13) { last = x; continue; }
-                //    else if (x == 10 && last == 13)
-                //    { 
-                //    }
-                //    if (x == 0)
-                //    { 
-                //    } 
-                //}
-
-                var pack = new HttpPack();
-                var arrA = new List<byte>();//Array.BinarySearch(,,,)
-                var contentLen = 0;
-                for (var i = 0; i < array.Length; i++)
-                {
-                    //请求体
-                    if (contentLen > 0)
-                    {
-                        var endIdx = i + contentLen - 1;
-                        if (endIdx >= array.Length)
-                        {
-                            endIdx = array.Length - 1;
-                            contentLen = array.Length - i + 1;
-                        }
-
-                        var buff = new byte[contentLen];
-                        Array.Copy(array, i, buff, 0, contentLen);
-                        pack.BodyBytes = buff;
-
-                        //
-                        if (pack.HeaderBytes != null && pack.BodyBytes != null)
-                        {
-                            list.Add(pack);
-                        }
-
-
-                        i = endIdx; continue;
-                    }
-
-
-                    //请求头
-                    var x = array[i];
-                    if (x == 13)
-                    {
-                        if (i + 3 < array.Length)//后边须至少有3个字符，才能组成\r\n\r\n这个连接串
-                        {
-                            if (array[i + 1] == 10 && array[i + 2] == 13 && array[i + 3] == 10)//组成\r\n\r\n这个连接串
-                            {
-                                //var htxt = Encoding.UTF8.GetString(lst.ToArray());
-                                pack.HeaderBytes = arrA.ToArray(); arrA.Clear();
-                                contentLen = pack.ContentLength ?? (array.Length - 1 - (i + 3));//没有值的,把后续全部都当作请求体
-
-                                i = i + 3; continue;
-                            }
-                        }
-                    }
-                    arrA.Add(x);
-                }
-            }
-            return list;
-        }
-
-        /// <summary>
-        /// 读取一段TCP消息,以\0分隔，将剩余未读的部分放入right中 (这不会很浪费时间，因为只在需要读取新内容 且 有可读内容时才会执行读取操作)
-        /// (请改用SocketClient中的相应方法)
-        /// </summary>
-        /// <param name="soc"></param>
-        /// <param name="left"></param>
-        /// <param name="right"></param>
-        /// <param name="array"></param>
-        /// <returns></returns>
-        public static byte[] ReadTcpPack(this Socket soc, byte[] left, out byte[] right)
-        {
-            var list = new List<byte>(); byte ch = 0;
-
-
-            //先从上次剩余的集left中读取
-            left ??= Array.Empty<byte>();
-            if (left.Length > 0)//left != null && 
-            {
-                var idx = Array.BinarySearch(left, ch);
-                if (idx >= 0)
-                {
-                    var buffA = new byte[idx];
-                    Array.Copy(left, 0, buffA, 0, buffA.Length);
-                    var buffB = new byte[left.Length - idx];
-                    Array.Copy(left, idx + 1, buffB, 0, buffB.Length);
-
-                    right = buffB;
-                    return buffA;
-                }
-            }
-
-
-            //再尝试从远端socket中读取
-            if (soc != null)
-            {
-                using var done = Pool.NewManualResetEventSlim();
-                using var e = Pool.NewSocketAsyncEventArgs();
-                e.Completed += (obj, arg) => { done.Set(); };
-                
-                var avaLen = soc.Available;
-                if (avaLen > 0)
-                {
-                    e.SetBuffer(new byte[avaLen]);
-                    if (soc.ReceiveAsync(e)) { done.Wait(TimeSpan.FromMinutes(1)); }
-
-                    if (e.SocketError == SocketError.Success)
-                    {
-                        #region -
-                        //var reaLen = e.BytesTransferred;
-                        //var buffer = new byte[ reaLen];
-                        //Array.Copy(left, 0, buffer , 0, buffer.Length);
-
-                        //var idx = Array.BinarySearch(buffer, ch);
-                        //if (idx >= 0)
-                        //{
-                        //    var buffA = new byte[idx+left.Length];
-                        //    Array.Copy(left, 0, buffA, 0, left.Length);
-                        //    Array.Copy(buffer, 0, buffA, left.Length, idx);
-                        //    var buffB = new byte[buffer.Length - idx];
-                        //    Array.Copy(buffer, idx + 1, buffB, 0, buffB.Length);
-
-                        //    right = buffB;
-                        //    return buffA;
-                        //}
-                        #endregion
-
-                        var reaLen = e.BytesTransferred;
-                        var buffer = e.Buffer; //new byte[reaLen];
-                                               //Array.Copy(left, 0, buffer, 0, buffer.Length);
-
-                        var idx = Array.BinarySearch(buffer, ch);
-                        if (idx >= 0)
-                        {
-                            var buffA = new byte[left.Length + idx];
-                            Array.Copy(left, 0, buffA, 0, left.Length);
-                            Array.Copy(buffer, 0, buffA, left.Length, idx);
-                            var buffB = new byte[reaLen - idx - 1];
-                            Array.Copy(buffer, idx + 1, buffB, 0, buffB.Length);
-
-                            right = buffB;
-                            return buffA;
-                        }
-                        else
-                        {
-                            var buffB = new byte[left.Length + reaLen];
-                            Array.Copy(left, 0, buffB, 0, left.Length);
-                            Array.Copy(buffer, 0, buffB, left.Length, reaLen);
-
-                            right = buffB;
-                            return null;
-                        }
-                    }
-                    else
-                    {
-                        AddRich($"M112008,从套接字读取字节出错,{e.SocketError}");
-                    }
-                }
-            }
-
-
-            right = null;
-            return null;
-        }
 
     }
 }
