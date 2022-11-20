@@ -14,7 +14,7 @@ namespace SimpleTunnelServer
             //new V1.Main().Start();
             //new V1.Server().Start();
             //new V1.Server2().Start();
-            new V1.Server2().Start();
+            new V1.Server3().Start();
 
             Thread.Sleep(Timeout.Infinite);
         }

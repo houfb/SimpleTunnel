@@ -12,9 +12,9 @@ namespace SimpleTunnelVisitor.V1
     {
         public void Start()
         {
-            Task.Run(() =>
+            Task.Run(async () =>
             {
-                DoHttpRequest();
+                while (true) { await DoHttpRequest(); await Task.Delay(1000); }
             });
         }
 
@@ -43,7 +43,7 @@ namespace SimpleTunnelVisitor.V1
         /// </summary>
         //string _domain = "http://houfb.cn";
         //System.Collections.Concurrent.ConcurrentBag<STClient> _STClientArray = new System.Collections.Concurrent.ConcurrentBag<STClient>();
-        string _serverIP = "127.0.0.1";
+        string _serverIP = "127.0.0.1";//"houfb.cn";//"127.0.0.1";
         int _serverPort = 80;
 
 
@@ -62,7 +62,7 @@ namespace SimpleTunnelVisitor.V1
                         { "Content-Length", body.Length.ToString() },
                         { "Host", "houfb.cn" },
                     });
-                    
+
 
                     //连接服务器 
                     using var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
@@ -94,50 +94,95 @@ namespace SimpleTunnelVisitor.V1
             DoHttpRequest();
         }
 
-        async void DoHttpRequest()
+        async Task DoHttpRequest()
         {
-            await Task.Run(() =>
-            {
-                try
-                {
-                    AddRich("-------------------------------------------------");
+            await Task.Run(  async () =>
+           {
+               Socket socket = null;
+               try
+               {
+                   using var done = new ManualResetEventSlim(false); using var e = new SocketAsyncEventArgs();
+                   e.Completed += (obj, arg) => { done.Set(); };
+                   using var ee = new SocketAsyncEventArgs();
+                   ee.Completed += (obj, arg) => { done.Set(); };
 
-                    //组装请求报文
-                    var link = "/main_left.html"; var method = "GET"; var body = Encoding.UTF8.GetBytes("");
-                    var rbuf = Common.MakeHttpRequestMessageText(link, method, body, new Dictionary<string, string>() {
+                   socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                   socket.SendTimeout = 1000; socket.ReceiveTimeout = 1000;
+                   AddRich("-------------------------------------------------");
+
+
+                   //组装请求报文
+                   var link = "/main_left.html"; var method = "GET"; var body = Encoding.UTF8.GetBytes("");
+                   var rbuf = Common.MakeHttpRequestMessageText(link, method, body, new Dictionary<string, string>() {
                         { "Content-Length", body.Length.ToString() },
                         { "Host", "houfb.cn" },
-                    });
+                   });
 
 
-                    //连接服务器 
-                    using var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
-                    socket.SendTimeout = 1000; socket.ReceiveTimeout = 10000;
-                    socket.Connect(new System.Net.IPEndPoint(IPAddress.Parse(_serverIP), _serverPort));
-                    AddRich("服务端连接成功！");
+                   //连接服务器    
+                   //socket.Connect(new System.Net.IPEndPoint(IPAddress.Parse(_serverIP), _serverPort));
+                   //AddRich("服务端连接成功！");  
+                   //if (socket.Connected == false)
+                   //{ 
+                   e.RemoteEndPoint = new System.Net.IPEndPoint(IPAddress.Parse(_serverIP), _serverPort);
+                   if (socket.ConnectAsync(e)) { done.Wait(10000); }
+                   if (e.SocketError != SocketError.Success) { AddRich($"服务端连接失败：{e.SocketError}"); goto PT; }
+                   AddRich("服务端连接成功！");
+                   //}
 
 
-                    //发送请求报文
-                    socket.Send(rbuf);
+
+                   //发送请求报文
+                   //socket.Send(rbuf);
+                   e.SetBuffer(rbuf); done.Reset();
+                   if (socket.SendAsync(e)) { done.Wait(10000); }
+                   if (e.SocketError != SocketError.Success) { AddRich($"发送请求报文失败：{e.SocketError}"); goto PT; }
+                   AddRich("发送请求报文成功！");
 
 
-                    //获取回致报文
-                    var buffer = new byte[1024]; var lg = socket.Available; var sd = socket.Connected;
-                    var len = socket.Receive(buffer);
-                    if (len > 0)
-                    {
-                        AddRich("回致报文：" + Encoding.UTF8.GetString(buffer, 0, len));
-                    }
-                    else
-                    {
-                        AddRich("回致报文长度：" + len);
-                    }
-                }
-                catch (Exception ex) { AddRich($"M111809,{ex.Message}"); }
-            });
+                   //获取回致报文
+                   //var buffer = new byte[1024]; var lg = socket.Available; var sd = socket.Connected;
+                   //var len = socket.Receive(buffer);
+                   //if (len > 0)
+                   //{
+                   //    AddRich("回致报文：" + Encoding.UTF8.GetString(buffer, 0, len));
+                   //}
+                   //else
+                   //{
+                   //    AddRich("回致报文长度：" + len);
+                   //}
+                   Thread.Sleep(1000);
+                   var buffer = new byte[1024]; done.Reset();
+                   ee.SetBuffer(buffer);
+                   if (socket.ReceiveAsync(ee)) { done.Wait(1000); }
+                   if (ee.SocketError != SocketError.Success) { AddRich($"接收响应报文失败：{ee.SocketError}"); }
+                   AddRich("接收响应报文成功！响应报文：" + ee.BytesTransferred);
+                   AddRich("" + Encoding.UTF8.GetString(buffer, ee.Offset, ee.BytesTransferred));
+                   //if (ee.BytesTransferred < 1)
+                   //{
+                   //    await socket.DisconnectAsync(false); 
+                   //}
 
-            Thread.Sleep(1000);
-            DoHttpRequest();
+
+
+               PT:
+
+                   //释放连接
+                   socket.Shutdown(SocketShutdown.Both); socket.Disconnect(false); socket.Close(); socket.Dispose();
+
+               }
+               catch (ObjectDisposedException ex) { AddRich($"M112012,{ex.Message}"); }
+               catch (SocketException ex) { AddRich($"M112013,{ex.Message}"); }
+               catch (Exception ex) { AddRich($"M111809,{ex.Message}"); }
+               finally
+               {
+                   try { await socket.DisconnectAsync(false); } catch { }
+                   using (socket) {    }
+               }
+           });
+
+            //Thread.Sleep(1000);
+            //DoHttpRequest();
         }
 
 

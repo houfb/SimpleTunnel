@@ -268,6 +268,20 @@ namespace SimpleTunnelServer.V1
             static readonly Regex regHeader = new Regex(@"(?<=\sContent\-Length: *)\S+", RegexOptions.IgnoreCase);
 
             /// <summary>
+            /// 完整消息
+            /// </summary>
+            public byte[] AllBytes;
+            /// <summary>
+            /// HTTP消息报文中的\r\n\r\n的索引位置，默认-1表示不存在
+            /// </summary>
+            public int SplitIndex = -1;
+            /// <summary>
+            /// 对外连接socket
+            /// </summary>
+            public SocketClient OuterClient  ;
+
+
+            /// <summary>
             /// 头部段的字节，包括头末尾的\r\n\r\n
             /// </summary>
             public byte[] HeaderBytes;
@@ -283,6 +297,9 @@ namespace SimpleTunnelServer.V1
                         _HeaderText = Encoding.UTF8.GetString(HeaderBytes);
                     }
                     return _HeaderText;
+                }
+                set {
+                    _HeaderText = value;
                 }
             }
             string _HeaderText;
@@ -606,7 +623,7 @@ namespace SimpleTunnelServer.V1
                 using var done = Pool.NewManualResetEventSlim();
                 using var e = Pool.NewSocketAsyncEventArgs();
                 e.Completed += (obj, arg) => { done.Set(); };
-                
+
                 var avaLen = soc.Available;
                 if (avaLen > 0)
                 {
@@ -671,6 +688,61 @@ namespace SimpleTunnelServer.V1
             right = null;
             return null;
         }
+
+        /// <summary>
+        /// 在字节数组中寻找指定的字节，并返回其索引
+        /// * 这是因为Array.BinarySearch非常不靠谱，所以才自已写了一个。
+        /// </summary>
+        /// <param name="array"></param>
+        /// <param name="bt"></param>
+        /// <returns></returns>
+        public static int BytesSearch(this byte[] array, byte bt)
+        {
+            if (array != null && bt >= 0)
+            {
+                for (var i = 0; i < array.Length; i++)
+                {
+                    if (bt == array[i]) { return i; }
+                }
+            }
+            return -1;
+        }
+        /// <summary>
+        /// 在字节数组中寻找指定的字符串，并返回其索引
+        /// * 这是因为Array.BinarySearch非常不靠谱，所以才自已写了一个。
+        /// </summary>
+        /// <param name="array"></param>
+        /// <param name="bts"></param>
+        /// <returns></returns>
+        public static int BytesSearch(this byte[] array, string bts)
+        {
+            if (array != null && bts != null && bts.Length > 0)
+            {
+                var c0 = (byte)bts[0];
+                for (var i = 0; i < array.Length; i++)
+                {
+                    if (array[i] == c0)//&& array[i+1]== bts[1] && array[i + 2] == bts[2] && array[i + 3] == bts[3]
+                    {
+                        //if (array[i + 1] == bts[1] && array[i + 2] == bts[2])  {  }
+
+                        if (bts.Length > 1)
+                        {
+                            var allSame = true;
+                            for (var j = 1; j < bts.Length; j++)
+                            {
+                                if (array[i + j] != bts[j]) { allSame = false; break; }
+                            }
+                            if (allSame) { return i; }
+                        }
+
+                    }
+
+                    //if (bt == array[i]) { return i; }
+                }
+            }
+            return -1;
+        }
+
 
     }
 }

@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Microsoft.Win32.SafeHandles;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace SimpleTunnelServer.V1
 {
@@ -24,7 +25,7 @@ namespace SimpleTunnelServer.V1
             Pool.Init();
             StartInnerAccept();
             StartOuterAccept();
-            StartDriver();
+            //StartDriver();
         }
 
         /// <summary>
@@ -145,8 +146,15 @@ namespace SimpleTunnelServer.V1
             /// <summary>
             /// 客户端连接套接字(故意使用了普通的数组类型，以保证绝大多数的读场景下效率达到最高,同时，借用赋值操作的原子性来保证读写互不影响)
             /// </summary>
+            [Obsolete]
             public STClient[] sockets;
             //public List<STClient> sockets = new();
+
+            /// <summary>
+            /// 客户端连接套接字(故意使用了普通的数组类型，以保证绝大多数的读场景下效率达到最高,同时，借用赋值操作的原子性来保证读写互不影响)
+            /// </summary>
+            public SocketClient[] clients;
+
 
 
             /// <summary>
@@ -213,7 +221,7 @@ namespace SimpleTunnelServer.V1
             {
                 try
                 {
-                    using (Socket soc = new Socket(SocketType.Stream, ProtocolType.Tcp))
+                    using (SocketClient soc = new SocketClient())//using (Socket soc = new Socket(SocketType.Stream, ProtocolType.Tcp))
                     {
                         soc.Bind(new IPEndPoint(IPAddress.Any, _innerPort));
                         soc.Listen(int.MaxValue);
@@ -223,6 +231,7 @@ namespace SimpleTunnelServer.V1
                         var e = new SocketAsyncEventArgs(); //e.DisconnectReuseSocket = true;//true表示断开后可以重用（在服务端，这似乎是一个鸡肋的设置，因为服务端不会主动发数据，在接受新连接时，这个值为true是否会让监听内部重用曾经的那个socket，还真得有待实验，但即使是可以重用，也除非是服务端监听的连接就始终是就那几台有限的客户机，且客户端socket指定了固定的端口，这个设置才会好使，否则，只会让服务端大量堆积起来一堆早已无用的连接，却又不知何时释放，因不能及时释放产生的堆积将迅速耗光服务端机器的内存）
                         e.Completed += new EventHandler<SocketAsyncEventArgs>(OnInnerAcceptCompleted);
                         e.UserToken = done; //new UserTokenReceiving { done = done };
+
 
                         while (true)
                         {
@@ -267,12 +276,13 @@ namespace SimpleTunnelServer.V1
         /// <param name="arg"></param>
         void OnInnerAcceptCompleted(object obj, SocketAsyncEventArgs arg) //=>  //连接完成事件  SocketAsync
         {
-            Socket soc = null!; SocketError err;
+            SocketClient soc = null!; SocketError err;
             try
             {
-                soc = arg.AcceptSocket!;//注意，连接完成事件中，要提取这个 Socket对象才是我们想要的那个Socket。
+                var soc_ = arg.AcceptSocket;//注意，连接完成事件中，要提取这个 Socket对象才是我们想要的那个Socket。
                 err = arg.SocketError;
                 (obj as ManualResetEventSlim)?.Set();  //token.done.Set();//一旦结束占用，arg就会被重用，上述信息就会被重置成别人的，但为了不过长时间占用，又需要尽快结束占用
+                soc = new SocketClient(soc_);
 
                 try
                 {
@@ -280,12 +290,19 @@ namespace SimpleTunnelServer.V1
                     {
                         AddRich($"已接受客户端连接：{soc.RemoteEndPoint}");
 
-
-                        var buffer = Common.ReadAllBytes(soc, 1024 * 1, 1000); //ArrayCombine(arr);
-                        var text = Encoding.UTF8.GetString(buffer);
+                        var buff = soc.ReadTcpPack();
+                        var text = Encoding.UTF8.GetString(buff ?? Array.Empty<byte>());
                         AddRich("收到信息：\n" + text);
 
 
+
+                        //return;
+                        ////var buffer = Common.ReadAllBytes(soc, 1024 * 1, 1000); //ArrayCombine(arr);
+                        ////var text = Encoding.UTF8.GetString(buffer);
+                        //AddRich("收到信息：\n" + text);
+
+
+                        //return;
                         var text_sps = (text ?? "").Split('\r', '\n').Where(x => x.Length > 0).ToArray();
                         var cmd = text_sps.Length > 0 ? text_sps[0].Trim() : "";
                         var secret = text_sps.Length > 1 ? text_sps[1].Trim() : "";
@@ -307,42 +324,26 @@ namespace SimpleTunnelServer.V1
 
 
                             //将domain和socket添加到集合中
-                            var stc = new STClient() { socket = soc, lastRequestCostTime = 0, id = Common.GetSeqNumber(), status = 1 };
+                            //var stc = new STClient() { socket = soc_, lastRequestCostTime = 0, id = Common.GetSeqNumber(), status = 1 };
+                            //var stc = new STClient() { socket = soc_, lastRequestCostTime = 0, id = Common.GetSeqNumber(), status = 1 };
+                            soc.status = 1;
                             lock (_LSDomainArrayLock) //把过程全部锁在内部，以保证线程同步，此过程理论上不会过度争抢，也不会耗费太多时间
                             {
                                 var existed = _LSDomainArray.FirstOrDefault(x => x.domain == domain);
                                 if (existed == null)
                                 {
-                                    //var arr = new List<LSDomain>(_LSDomainArray);
-                                    //arr.Add(new LSDomain { domain = domain });// arr.Add(new LSDomain { domain = domain, sockets = new STClient[] { stc } });
-                                    //_LSDomainArray = arr.ToArray();
-
-                                    //var lsd = new LSDomain { domain = domain }; lsd.sockets.Add(stc);
-                                    //var arr = new List<LSDomain>(_LSDomainArray) { lsd };
-                                    //_LSDomainArray = arr.ToArray();
-
-                                    var lsd = new LSDomain { domain = domain, sockets = new[] { stc } };
-                                    var arr = new List<LSDomain>(_LSDomainArray) { lsd };
+                                    //var lsd = new LSDomain { domain = domain, sockets = new[] { stc } };
+                                    var arr = new List<LSDomain>(_LSDomainArray) {
+                                        new LSDomain {  domain = domain,clients= new []{ soc}  }
+                                    };
                                     _LSDomainArray = arr.ToArray();
                                 }
                                 else //已存在域名，则直接添加到其客户端集合中
                                 {
-                                    //var arr = new List<STClient>(existed.sockets);
-
-                                    //if (existed.sockets.FirstOrDefault(x => x.socket == soc) == null)
-                                    //{
-                                    //    existed.sockets.Add(stc);
-                                    //}
-                                    //else
-                                    //{
-                                    //    //AddRich($"客户端实例已存在于集合中了，无需重复执行");
-                                    //}
-
-
-                                    if (existed.sockets.FirstOrDefault(x => x.socket == soc) == null)
+                                    if (existed.clients.FirstOrDefault(x => x == soc) == null)
                                     {
-                                        var arr = new List<STClient>(existed.sockets) { stc };
-                                        existed.sockets = arr.ToArray();
+                                        var arr = new List<SocketClient>(existed.clients) { soc };
+                                        existed.clients = arr.ToArray();
                                     }
                                     else
                                     {
@@ -350,7 +351,7 @@ namespace SimpleTunnelServer.V1
                                     }
                                 }
                             }
-                            AddRich($"客户端实例已进入集合：当前监听域名数: {_LSDomainArray.Length}，当前连接客户端总数：{_LSDomainArray.Sum(x => x.sockets.Length)}");
+                            AddRich($"客户端实例已进入集合：当前监听域名数: {_LSDomainArray.Length}，当前连接客户端总数：{_LSDomainArray.Sum(x => x.clients.Length)}");
 
 
 
@@ -364,9 +365,6 @@ namespace SimpleTunnelServer.V1
                                 //    e.SetBuffer(new byte[1024]); 
                                 //}
                             }
-
-
-
 
 
                         }
@@ -708,6 +706,7 @@ namespace SimpleTunnelServer.V1
            }
        });
        */
+        /* v3
         /// <summary>
         /// 接受连接成功后，将 Socket 写入管道集合 (异步和同步都调用了此方法) 
         /// </summary>
@@ -715,12 +714,13 @@ namespace SimpleTunnelServer.V1
         /// <param name="arg"></param>
         void OnOuterAcceptCompleted(object obj, SocketAsyncEventArgs arg) //=>  //连接完成事件  SocketAsync
         {
-            Socket soc = null; SocketError err;
+            SocketClient soc = null; SocketError err;
             try
             {
-                soc = arg.AcceptSocket;//注意，连接完成事件中，要提取这个 Socket对象才是我们想要的那个Socket。
+               var soc_ = arg.AcceptSocket;//注意，连接完成事件中，要提取这个 Socket对象才是我们想要的那个Socket。
                 err = arg.SocketError;
                 (obj as ManualResetEventSlim)?.Set();  //token.done.Set();//一旦结束占用，arg就会被重用，上述信息就会被重置成别人的，但为了不过长时间占用，又需要尽快结束占用
+                soc = new SocketClient(soc_);
 
                 try
                 {
@@ -734,6 +734,7 @@ namespace SimpleTunnelServer.V1
                         while (true) //长连接，循环读取所有消息包，但各消息包之间须是独立的
                         {
                             //读取消息字节流，并解析成HTTP请求报文消息包
+                            
                             var buff = Common.ReadAllBytes(soc, 1024 * 1, 5000); //ArrayCombine(arr);
                             var packs = Common.HttpSplitPack(buff);
                             if (true)
@@ -750,6 +751,7 @@ namespace SimpleTunnelServer.V1
 #endif
                                 #endregion
                             }
+                           
 
                             //将消息包送入指定的域名的入站队列中
                             foreach (var pack in packs)
@@ -814,7 +816,115 @@ namespace SimpleTunnelServer.V1
                 //try { token.done.Set(); } catch { }
             }
         }
+        */
+        /// <summary>
+        /// 接受连接成功后，将 Socket 写入管道集合 (异步和同步都调用了此方法) 
+        /// </summary>
+        /// <param name="obj"></param>
+        /// <param name="arg"></param>
+        void OnOuterAcceptCompleted(object obj, SocketAsyncEventArgs arg) //=>  //连接完成事件  SocketAsync
+        {
+            SocketClient soc = null; SocketError err;
+            try
+            {
+                var soc_ = arg.AcceptSocket;//注意，连接完成事件中，要提取这个 Socket对象才是我们想要的那个Socket。
+                err = arg.SocketError;
+                (obj as ManualResetEventSlim)?.Set();  //token.done.Set();//一旦结束占用，arg就会被重用，上述信息就会被重置成别人的，但为了不过长时间占用，又需要尽快结束占用
+                soc = new SocketClient(soc_);
 
+                try
+                {
+                    if (err == SocketError.Success && soc != null && soc.Connected)
+                    {
+                        AddRich($"已接受客户端连接：{soc.RemoteEndPoint}");
+
+                        //var buffer = Common.ReadAllBytes(soc, 1024 * 1, 5000); //ArrayCombine(arr);
+                        //var text = Encoding.UTF8.GetString(buffer);
+                        //AddRich("收到信息：\n" + text);
+                        while (true) //长连接，循环读取所有消息包，但各消息包之间须是独立的
+                        {
+                            //连接异常时，跳出接收循环，并在末尾释放资源
+                            if (soc.status == 2) break;
+
+
+                            //读取消息字节流，并解析成HTTP请求报文消息包
+                            var buff = soc.ReadHttpPack(0); if (buff == null) { Thread.Sleep(10); continue; }
+                            //var btss = buff ?? Array.Empty<byte>();
+                            AddRich("收到信息：\n" + Encoding.UTF8.GetString(buff ?? Array.Empty<byte>()));
+                            var idxh = Common.BytesSearch(buff, "\r\n\r\n");
+                            var head = idxh >= 0 ? Encoding.UTF8.GetString(buff, 0, idxh) : Encoding.UTF8.GetString(buff);  // var text = Encoding.UTF8.GetString(buff ?? Array.Empty<byte>()); ;
+
+
+                            //打包成消息包
+                            var pack = new Common.HttpPack();
+                            pack.AllBytes = buff;
+                            pack.SplitIndex = idxh;
+                            pack.HeaderText = head;
+                            pack.OuterClient = soc;
+
+
+                            //将消息包送入相应域下的入站队列
+                            if (true)
+                            {
+                                if (string.IsNullOrEmpty(pack.Host)) { continue; }//没有主机名就只接跳过，因为服务端监听的地址有多个，所以要求请求头中必须有Host指定
+                                var domain = pack.Host;
+
+                                var target = _LSDomainArray.Where(x => x.domain == domain).FirstOrDefault();
+                                if (target != null)//监听域存在
+                                {
+                                    target.requestQueue.Enqueue(pack);
+                                }
+                                else //监听域不存在，直接回致并释放对外连接socket
+                                {
+                                    try
+                                    {
+                                        using (soc)
+                                        {
+                                            var bts = Common.MakeHttpResponseMessageText(Encoding.UTF8.GetBytes("Listening client can not be found!"));
+
+                                            using var e = Pool.NewSocketAsyncEventArgs();
+                                            e.SetBuffer(bts);//其实，发不发此消息，都是可以的，发一个只是表示一下友好而已
+                                            soc.SendAsync(e);
+                                            soc.Shutdown(SocketShutdown.Both);
+                                             //  soc.DisconnectAsync(false);
+                                            soc.Close();
+                                        }
+                                    }
+                                    catch { }//注：这里不再监控日志，因为客户端可能只是发起了一个连接操作和发送操作，并没有进行接收操作，就直接关掉了连接。
+
+                                    break;//goto PT;//break;//监听客户端不存在时，直接释放连接
+                                }
+
+                            }
+
+
+                        }
+
+                    //PT:
+                        AddRich("对外连接socket已释放！");  //soc.Dispose();
+                    }
+                    else
+                    {
+                        AddRich($"M111721,接受连接，出错：SocketError=[{err}]\t AcceptSocket=[{soc}]\t Connected=[{(soc == null ? "" : soc.Connected.ToString())}]");
+                        using (soc) { }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AddRich($"M111720,出错：{ex.Message}"); using (soc) { }
+                }
+            }
+            catch (Exception ex)
+            {
+                AddRich($"M111719,接受连接，出错：{ex.Message}"); using (soc) { }
+            }
+            finally
+            {
+                //try { arg.Dispose(); } catch { }
+                //try { token.done.Set(); } catch { }
+                using (soc) { }
+            }
+        }
 
 
         /// <summary>
@@ -996,11 +1106,12 @@ namespace SimpleTunnelServer.V1
                 {
                     try
                     {
-                        foreach (var client in dom.sockets) {
+                        foreach (var client in dom.sockets)
+                        {
                             //client.socket.ReadTcpPack()
 
                             SocketClient sc = new SocketClient();
-                            
+
 
 
                         }

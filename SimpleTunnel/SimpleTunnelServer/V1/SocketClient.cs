@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -11,7 +12,7 @@ using static SimpleTunnelServer.V1.Common;
 
 namespace SimpleTunnelServer.V1
 {
-    internal class SocketClient : Socket
+    internal class SocketClient : IDisposable//: Socket
     {
         //public SocketClient(SocketType socketType, ProtocolType protocolType)  : base(socketType, protocolType)
         //{
@@ -25,10 +26,92 @@ namespace SimpleTunnelServer.V1
         //{
         // return  new SocketClient(SocketType.Stream, ProtocolType.Tcp); 
         //}
-        public SocketClient() : base(SocketType.Stream, ProtocolType.Tcp)
+        //public SocketClient() : base(SocketType.Stream, ProtocolType.Tcp)
+        //{ 
+        //}
+
+
+        #region 基本
+        Socket _socket = null;
+        public SocketClient(Socket soc = null)
         {
+            if (soc == null) _socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+            else _socket = soc;
+        }
+
+        public void Bind(EndPoint ep)
+        {
+            _socket.Bind(ep);
+        }
+        public void Listen(int ep)
+        {
+            _socket.Listen(ep);
+        }
+        public EndPoint LocalEndPoint
+        {
+            get { return _socket.LocalEndPoint; }
+        }
+        public EndPoint RemoteEndPoint
+        {
+            get { return _socket.RemoteEndPoint; }
+        }
+        public bool Connected
+        {
+            get { return _socket.Connected; }
+        }
+        public int Available
+        {
+            get { return _socket.Available; }
+        }
+        public bool AcceptAsync(SocketAsyncEventArgs ep)
+        {
+            return _socket.AcceptAsync(ep);
+        }
+        public bool SendAsync(SocketAsyncEventArgs ep)
+        {
+            return _socket.SendAsync(ep);
+        }
+        public bool ReceiveAsync(SocketAsyncEventArgs ep)
+        {
+            return _socket.ReceiveAsync(ep);
+        }
+        public void Shutdown(SocketShutdown b)
+        {
+            _socket.Shutdown(b);
+        }
+        public void Close()
+        {
+            try {
+                //using var e = new SocketAsyncEventArgs();
+                //e.DisconnectReuseSocket = false;
+                //_socket.DisconnectAsync(e);
+                _socket.Disconnect(false);
+            } catch  { }
+            _socket.Close();
+        }
+        public void Dispose()
+        {
+            //throw new NotImplementedException();
+            // }
+            try
+            {
+                //using var e = new SocketAsyncEventArgs();
+                //e.DisconnectReuseSocket = false;
+                //_socket.DisconnectAsync(e);
+                _socket.Disconnect(false);
+            }
+            catch { }
+            try
+            { 
+                _socket.Close();
+            }
+            catch { }
+            if (_socket != null) {  _socket.Dispose(); }
 
         }
+        #endregion
+
+
 
 
 
@@ -69,7 +152,7 @@ namespace SimpleTunnelServer.V1
             left ??= Array.Empty<byte>();
             if (left.Length > 0)//left != null && 
             {
-                var idx = Array.BinarySearch(left, _o);
+                var idx = Common.BytesSearch(left, _o);
                 if (idx >= 0)
                 {
                     var buffA = new byte[idx];
@@ -87,8 +170,8 @@ namespace SimpleTunnelServer.V1
             var soc = this;
             if (soc != null)
             {
-                using var done = Pool.NewManualResetEventSlim();
-                using var e = Pool.NewSocketAsyncEventArgs();
+                var done = Pool.NewManualResetEventSlim();
+                var e = Pool.NewSocketAsyncEventArgs();
                 e.Completed += (obj, arg) => { done.Set(); };
 
                 try
@@ -96,15 +179,20 @@ namespace SimpleTunnelServer.V1
                     var avaLen = soc.Available;
                     if (avaLen > 0)
                     {
-                        e.SetBuffer(new byte[avaLen]);
+                        var buffer = new byte[avaLen];
+                        //e.SetBuffer(new byte[avaLen]);
+                        //e.SetBuffer(new byte[1024]);
+                        //e.Buffer = new byte[1024];  
+                        e.SetBuffer(buffer);
                         if (soc.ReceiveAsync(e)) { done.Wait(TimeSpan.FromMinutes(1)); }
 
                         if (e.SocketError == SocketError.Success)
                         {
                             var reaLen = e.BytesTransferred;
-                            var buffer = e.Buffer;
+                            //var buffer =    e.Buffer;
+                            //var buffer = e.Buffer;
 
-                            var idx = Array.BinarySearch(buffer, _o);
+                            var idx = Common.BytesSearch(buffer, _o);
                             if (idx >= 0)
                             {
                                 var buffA = new byte[left.Length + idx];
@@ -129,7 +217,13 @@ namespace SimpleTunnelServer.V1
                         else
                         {
                             AddRich($"M112008,从套接字读取字节出错,{e.SocketError}");
+                            this.status = 2;
+                            throw new Exception($"M112008,从套接字读取字节出错,{e.SocketError}");
                         }
+                    }
+                    else
+                    {
+                        if (left.Length > 0) right = left; //能走到这里，一定是left中没有找到\0符
                     }
                 }
                 catch (ObjectDisposedException) //Socket 已关闭。(soc.Available)
@@ -187,11 +281,7 @@ namespace SimpleTunnelServer.V1
             if (left.Length > 0)//left != null && 
             {
                 int startIdx = 0, endIdx = 0;
-                //if (true)
-                //{
-                //    var cur = 0; 
-                //    var ir = Array.BinarySearch(left, cur, left.Length, _r); 
-                //}
+
 
 
 
@@ -230,7 +320,7 @@ namespace SimpleTunnelServer.V1
 
 
 
-                var idx = Array.BinarySearch(left, _r);
+                var idx = Common.BytesSearch(left, _r);
                 if (idx >= 0)
                 {
                     var buffA = new byte[idx];
@@ -265,7 +355,7 @@ namespace SimpleTunnelServer.V1
                             var reaLen = e.BytesTransferred;
                             var buffer = e.Buffer;
 
-                            var idx = Array.BinarySearch(buffer, _o);
+                            var idx = Common.BytesSearch(buffer, _o);
                             if (idx >= 0)
                             {
                                 var buffA = new byte[left.Length + idx];
@@ -401,7 +491,7 @@ namespace SimpleTunnelServer.V1
 
 
 
-                var idx = Array.BinarySearch(left, _r);
+                var idx = Common.BytesSearch(left, _r);
                 if (idx >= 0)
                 {
                     var buffA = new byte[idx];
@@ -436,7 +526,7 @@ namespace SimpleTunnelServer.V1
                             var reaLen = e.BytesTransferred;
                             var buffer = e.Buffer;
 
-                            var idx = Array.BinarySearch(buffer, _o);
+                            var idx = Common.BytesSearch(buffer, _o);
                             if (idx >= 0)
                             {
                                 var buffA = new byte[left.Length + idx];
@@ -492,7 +582,7 @@ namespace SimpleTunnelServer.V1
         /// <param name="right"></param>
         /// <param name="array"></param>
         /// <returns></returns>
-        public byte[] ReadHttpPack(int waitMs=0)//byte[] left, out byte[] right, ref int bodyLen, ref DateTime startReadTime, ref string headText
+        public byte[] ReadHttpPack(int waitMs = 0)//byte[] left, out byte[] right, ref int bodyLen, ref DateTime startReadTime, ref string headText
         {
             var soc = this;
             if (soc != null)
@@ -511,15 +601,16 @@ namespace SimpleTunnelServer.V1
                         var avaLen = soc.Available;
                         if (avaLen > 0)
                         {
-                            e.SetBuffer(new byte[avaLen]);
+                            var buffer = new byte[avaLen];
+                            e.SetBuffer(buffer);// e.SetBuffer(new byte[avaLen]);
                             if (soc.ReceiveAsync(e)) { done.Wait(TimeSpan.FromMinutes(1)); }
 
                             if (e.SocketError == SocketError.Success)
                             {
                                 var reaLen = e.BytesTransferred;
-                                var buffer = e.Buffer;
+                                //var buffer = e.Buffer;
 
-                                list.Add(new BytesSegment { bytes = e.Buffer, offset = e.Offset, length = e.BytesTransferred });
+                                list.Add(new BytesSegment { bytes = buffer, offset = e.Offset, length = e.BytesTransferred });
 
                             }
                             else
@@ -530,7 +621,7 @@ namespace SimpleTunnelServer.V1
                         }
                         else
                         {
-                            if (waitMsHad <= waitMs) { Thread.Sleep(1); waitMsHad += 1; }
+                            if (waitMsHad < waitMs) { Thread.Sleep(1); waitMsHad += 1; }
                             else
                             {
                                 var buff = ArrayCompine(list);
@@ -544,7 +635,7 @@ namespace SimpleTunnelServer.V1
                             //    Array.Copy(x.bytes, x.offset, buffe, curIdx, x.length);
                             //    curIdx += x.length;
                             //}
-                             
+
                         }
                     }
                     catch (ObjectDisposedException) //Socket 已关闭。(soc.Available)
@@ -593,15 +684,43 @@ namespace SimpleTunnelServer.V1
 
         public byte[] ArrayCompine(IEnumerable<BytesSegment> list)
         {
-            var total = list.Sum(x => x.length);
-            var buffe = new byte[total]; var curIdx = 0;
-            foreach (var x in list)
+            if (list != null && list.Count() > 0)
             {
-                Array.Copy(x.bytes, x.offset, buffe, curIdx, x.length);
-                curIdx += x.length;
+                var total = list.Sum(x => x.length);
+                var buffe = new byte[total]; var curIdx = 0;
+                foreach (var x in list)
+                {
+                    Array.Copy(x.bytes, x.offset, buffe, curIdx, x.length);
+                    curIdx += x.length;
+                }
+                return buffe;
             }
-            return buffe;
+            else { return Array.Empty<byte>(); }
         }
+
+
+        /// <summary>
+        /// 用HTTP/1.1协议，异步发送一段文本，不管成功与否，也不等待
+        /// </summary>
+        /// <param name="text"></param>
+        public void SendHttpStringAsync(string text)
+        {
+            var bts = Common.MakeHttpResponseMessageText(Encoding.UTF8.GetBytes(text??""));
+            var soc = _socket;
+
+            using var e = Pool.NewSocketAsyncEventArgs();
+            e.SetBuffer(bts);//其实，发不发此消息，都是可以的，发一个只是表示一下友好而已
+            soc.SendAsync(e);
+            //soc.Shutdown(SocketShutdown.Both);
+            //await  soc.DisconnectAsync(false);
+            //soc.Close();
+        }
+
+
+
+
+
+
 
 
 
@@ -630,5 +749,7 @@ namespace SimpleTunnelServer.V1
             if (type == 0) Console.WriteLine(txt);
 #endif 
         }
+
+
     }
 }
